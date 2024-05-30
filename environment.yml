@@ -1,0 +1,43 @@
+name: clip-vsr
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  # - python>=3.9, <3.10
+  - python
+  - pip
+  - pytorch=1.12.1 
+  - torchvision==0.13.1 
+  - torchaudio==0.12.1 
+  - cudatoolkit=11.6 
+  # - jupyter
+  # - rust
+  - numpy
+  - pandas
+
+  - pip:
+      - Pillow
+      - matplotlib
+      - opencv_python
+      - tqdm
+      - transformers
+      - utils
+      # - wandb
+
+
+      # - ftfy
+      # - regex
+      # # - transformers==4.21.2
+      # - transformers==4.15.0
+      # - timm
+      # - fairscale
+      # - requests
+      - -e git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers
+      - -e git+https://github.com/openai/CLIP.git@main#egg=clip
+      # - -e git+https://github.com/pharmapsychotic/BLIP.git@main#egg=blip
+      # - -e .
+variables:
+  MY_VAR: 1
+
+
+
