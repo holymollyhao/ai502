@@ -3,7 +3,7 @@ import os
 import argparse
 from tqdm.auto import tqdm
 import torch
-from data import ImageTextClassificationDataset
+from data import ImageTextClassificationDataset, negate_horizontal_flip
 
 def evaluate(data_loader, model):
     model.cuda()
@@ -26,28 +26,49 @@ def evaluate(data_loader, model):
         # reproduce huggingface webapp
         image_features = outputs.image_embeds
         text_features = outputs.text_embeds
-
-        raw_scores = (100.0 * image_features @ text_features.T)
-
-        scores = torch.as_tensor([[raw_scores[0][0], raw_scores[0][1]]]).cuda()
-        initial_preds_current = torch.argmax(scores, dim=1)
-        initial_correct_this_batch = int(sum(y == initial_preds_current))
-
-        scores = raw_scores
-        scores = scores.softmax(dim=-1)
-        
-        preds_current = torch.argmax(scores, dim=1) # choose the higher similarity one
+        preds_vote = []
+        for voting in range(image_features.shape[0]):
+            image_feature = image_features[voting, :].unsqueeze(dim=0)
+            text_feature = text_features[2*voting:2*voting+2, :]
+            # print(image_feature.shape, text_feature.shape)
+            raw_scores = (100.0 * image_feature @ text_feature.T)
+            # print(raw_scores)
+            scores = torch.as_tensor([[raw_scores[0][0], raw_scores[0][1]]]).cuda()
+            scores = scores.softmax(dim=-1)
+            preds_current = torch.argmax(scores, dim=1)
+            preds_vote.append(preds_current)
+        preds_vote = torch.Tensor(preds_vote)
+        preds_current = torch.Tensor([torch.median(preds_vote)]).cuda()
         correct_this_batch = int(sum(y == preds_current))
+        # print(preds_current, y, correct_this_batch)
+        # print(preds_vote, preds_current, y)
+        # print(y, correct_this_batch)
+        # exit()
+            
+        # print(image_features.shape, text_features.shape)
+        # import pdb; pdb.set_trace()
+        # raw_scores = (100.0 * image_features @ text_features.T)
 
-        if initial_correct_this_batch != correct_this_batch:
-            inital_vs_final_disagreements += 1
+        # scores = torch.as_tensor([[raw_scores[0][0], raw_scores[0][1]]]).cuda()
+        # initial_preds_current = torch.argmax(scores, dim=1)
+        # initial_correct_this_batch = int(sum(y == initial_preds_current))
+
+        # scores = raw_scores
+        # scores = scores.softmax(dim=-1)
+        
+        # preds_current = torch.argmax(scores, dim=1) # choose the higher similarity one
+        # correct_this_batch = int(sum(y == preds_current))
+
+        # if initial_correct_this_batch != correct_this_batch:
+        #     inital_vs_final_disagreements += 1
+        
         correct += correct_this_batch
         preds += preds_current.cpu().numpy().tolist()
         total+=batch_img.shape[0]
         all_true += sum(y)
         ave_score = correct / float(total)
-        if correct_this_batch != batch_img.shape[0]:
-            errors.append(filenames[0]+' '+str(int(y[0]))+' '+captions[0]+', '+captions[1]+', '+str(float(scores[0][0]))+', '+str(float(scores[0][1])))
+        # if correct_this_batch != batch_img.shape[0]:
+        #     errors.append(filenames[0]+' '+str(int(y[0]))+' '+captions[0]+', '+captions[1]+', '+str(float(scores[0][0]))+', '+str(float(scores[0][1])))
 
 
     # TODO: save also predictions
@@ -58,7 +79,7 @@ if __name__ == "__main__":
     # takes 10 min for evaluation
     
     parser = argparse.ArgumentParser(description='eval')
-    parser.add_argument('--model_url', type=str, default='laion/CLIP-ViT-H-14-laion2B-s32B-b79K')
+    parser.add_argument('--model_url', type=str, default='openai/clip-vit-large-patch14-336')
     parser.add_argument('--output_preds', action='store_true')
 
     args = parser.parse_args()
@@ -74,13 +95,21 @@ if __name__ == "__main__":
     
     json_path = os.path.join('data', 'data_files', 'all_vsr_validated_data.jsonl') # 10119 image text pairs
     img_path = os.path.join('data', 'images') # changes to images
-    dataset = ImageTextClassificationDataset(img_path, json_path)
+    relations = list(negate_horizontal_flip.keys())
+    dataset = ImageTextClassificationDataset(img_path, json_path, filter_relations=relations, flips=['horizontal_flip'])
+    # dataset = ImageTextClassificationDataset(img_path, json_path, filter_relations=relations, flips=[])
+
 
     def collate_fn_batch_clip(batch):
         imgs, captions, labels, filenames = zip(*batch)
-        inputs = processor(captions[0], images=imgs, return_tensors="pt", padding=True)
+
+        inputs = processor(captions[0], images=imgs[0], return_tensors="pt", padding=True)
+        input_ids = inputs.input_ids
+        pixel_values = inputs.pixel_values
+        # print(input_ids.shape, pixel_values.shape)
+        
         labels = torch.tensor(labels)
-        return inputs.input_ids, inputs.pixel_values, labels, list(captions[0]), filenames
+        return input_ids, pixel_values, labels, list(captions[0]), filenames
         
     collate_fn_batch = collate_fn_batch_clip
 

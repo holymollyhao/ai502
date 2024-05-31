@@ -18,6 +18,13 @@ See [`data/`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/mast
 python src/eval.py
 ```
 
+## Result
+### Small result with restricted predicates (2077 data points)
+- result after horizontal flip & vertical flip: 17 % 
+- result after horizontal flip: 26.2 %
+- result after vertical flip: 26.4 % 
+- result without augmentation: 52.5 %
+
 Below is the original README.md file from the [repository](https://github.com/Sohojoe/CLIP_visual-spatial-reasoning)
 
 <br />
