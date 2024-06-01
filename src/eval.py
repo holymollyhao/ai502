@@ -41,10 +41,10 @@ def evaluate(data_loader, model, is_original=False):
         preds_vote = torch.Tensor(preds_vote)
         preds_current = torch.Tensor([torch.median(preds_vote)]).cuda()
 
-        orig_preds = torch.argmax(image_features @ text_features.T, dim=1)[0]
-        orig_max_prob = torch.max((image_features @ text_features.T)[0])
-        aug_preds = torch.argmax(image_features @ text_features.T, dim=1)[1]
-        aug_max_prob = torch.max((image_features @ text_features.T)[1])
+        orig_preds = torch.argmax(image_features @ text_features[:2].T, dim=1)[0]
+        orig_max_prob = torch.max((image_features @ text_features[:2].T)[0])
+        aug_preds = torch.argmax(image_features @ text_features[2:].T, dim=1)[1]
+        aug_max_prob = torch.max((image_features @ text_features[2:].T)[1])
 
         if orig_max_prob < aug_max_prob:
             preds_current = aug_preds
@@ -52,12 +52,12 @@ def evaluate(data_loader, model, is_original=False):
             preds_current = orig_preds
 
 
-        # if orig_preds != aug_preds:
-        #     if orig_preds == y:
-        #         print("orig correct")
-        #     elif aug_preds == y:
-        #         print("aug correct")
-            # print(filenames[0], captions[0], captions[1], orig_preds.item(), aug_preds.item(), y.item(), preds_current.item())
+        if orig_preds != aug_preds:
+            if orig_preds == y:
+                print("orig correct")
+            elif aug_preds == y:
+                print("aug correct")
+            print(filenames[0], captions[0], captions[1], orig_preds.item(), aug_preds.item(), y.item(), preds_current.item())
 
         correct_this_batch = int(sum(y == preds_current))
         correct_this_batch_orig = int(sum(y == orig_preds))
