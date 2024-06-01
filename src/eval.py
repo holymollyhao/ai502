@@ -5,10 +5,11 @@ from tqdm.auto import tqdm
 import torch
 from data import ImageTextClassificationDataset, negate_horizontal_flip
 
-def evaluate(data_loader, model):
+def evaluate(data_loader, model, is_original=False):
     model.cuda()
     model.eval()
 
+    correct_orig = 0
     correct, total, all_true = 0, 0, 0
     preds = []
     errors = list()
@@ -39,7 +40,27 @@ def evaluate(data_loader, model):
             preds_vote.append(preds_current)
         preds_vote = torch.Tensor(preds_vote)
         preds_current = torch.Tensor([torch.median(preds_vote)]).cuda()
+
+        orig_preds = torch.argmax(image_features @ text_features.T, dim=1)[0]
+        orig_max_prob = torch.max((image_features @ text_features.T)[0])
+        aug_preds = torch.argmax(image_features @ text_features.T, dim=1)[1]
+        aug_max_prob = torch.max((image_features @ text_features.T)[1])
+
+        if orig_max_prob < aug_max_prob:
+            preds_current = aug_preds
+        else:
+            preds_current = orig_preds
+
+
+        # if orig_preds != aug_preds:
+        #     if orig_preds == y:
+        #         print("orig correct")
+        #     elif aug_preds == y:
+        #         print("aug correct")
+            # print(filenames[0], captions[0], captions[1], orig_preds.item(), aug_preds.item(), y.item(), preds_current.item())
+
         correct_this_batch = int(sum(y == preds_current))
+        correct_this_batch_orig = int(sum(y == orig_preds))
         # print(preds_current, y, correct_this_batch)
         # print(preds_vote, preds_current, y)
         # print(y, correct_this_batch)
@@ -63,16 +84,18 @@ def evaluate(data_loader, model):
         #     inital_vs_final_disagreements += 1
         
         correct += correct_this_batch
-        preds += preds_current.cpu().numpy().tolist()
+        correct_orig += correct_this_batch_orig
+        preds += [preds_current.cpu().numpy()]
         total+=batch_img.shape[0]
         all_true += sum(y)
-        ave_score = correct / float(total)
+    ave_score = correct / float(total)
+    ave_score_orig = correct_orig / float(total)
         # if correct_this_batch != batch_img.shape[0]:
         #     errors.append(filenames[0]+' '+str(int(y[0]))+' '+captions[0]+', '+captions[1]+', '+str(float(scores[0][0]))+', '+str(float(scores[0][1])))
 
 
     # TODO: save also predictions
-    return ave_score, total, all_true, preds, errors
+    return ave_score_orig, ave_score, total, all_true, preds, errors
             
 
 if __name__ == "__main__":
@@ -81,6 +104,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='eval')
     parser.add_argument('--model_url', type=str, default='openai/clip-vit-large-patch14-336')
     parser.add_argument('--output_preds', action='store_true')
+    parser.add_argument('--is_original', action='store_true')
 
     args = parser.parse_args()
 
@@ -96,7 +120,12 @@ if __name__ == "__main__":
     json_path = os.path.join('data', 'data_files', 'all_vsr_validated_data.jsonl') # 10119 image text pairs
     img_path = os.path.join('data', 'images') # changes to images
     relations = list(negate_horizontal_flip.keys())
-    dataset = ImageTextClassificationDataset(img_path, json_path, filter_relations=relations, flips=['horizontal_flip'])
+    dataset = ImageTextClassificationDataset(
+        os.path.join('../', img_path),
+        os.path.join('../', json_path),
+        filter_relations=relations,
+        flips=['adaptive_flip']
+    )
     # dataset = ImageTextClassificationDataset(img_path, json_path, filter_relations=relations, flips=[])
 
 
@@ -119,8 +148,8 @@ if __name__ == "__main__":
         batch_size=1,
         shuffle=False,
         num_workers=0,)
-    acc, total, all_true, preds, errors = evaluate(test_loader, model)
-    print (f"total example: {total}, # true example: {all_true}, acccuracy: {acc}")
+    orig_acc, acc, total, all_true, preds, errors = evaluate(test_loader, model, args.is_original)
+    print (f"total example: {total}, # true example: {all_true}, orig_acc: {orig_acc}, acccuracy: {acc}")
 
     if args.output_preds:
         with open(os.path.join(args.checkpoint_path, "preds.txt"), "w") as f:
