@@ -108,8 +108,8 @@ def evaluate(data_loader, model, flips=None):
         text_features = outputs.text_embeds
         preds_vote = []
 
-        if relation_names[0] in ['above', 'below']:
-        # if relation_names[0]  in ['at the right side of', 'at the left side of', 'left of', 'right of']:
+        # if relation_names[0] in ['above', 'below']:
+        if relation_names[0]  in ['at the right side of', 'at the left side of', 'left of', 'right of']:
             image_feat_list.append(image_features)
 
             text_feat_list.append(text_features[:len(text_features)//2])
@@ -196,6 +196,8 @@ def evaluate(data_loader, model, flips=None):
             correct_per_relation[relation_names[0]] = correct_this_batch
             cnt_per_relation[relation_names[0]] = 1
 
+        # if int(sum(y != preds_current)):
+        #     show_image(pixel_values[0], captions[0])
 
         # print(preds_current, y, correct_this_batch)
         # print(preds_vote, preds_current, y)
@@ -230,8 +232,8 @@ def evaluate(data_loader, model, flips=None):
             import numpy as np
             print(f'{key}: {np.round(correct_per_relation[key] / cnt_per_relation[key], 2)}')
 
-        if len(text_feat_list) == 100:
-            break
+        # if len(text_feat_list) == 100:
+        #     break
         # print(f'per relation: {correct_per_relation / total}')
     ave_score = correct / float(total)
     ave_score_orig = correct_orig / float(total)
@@ -240,7 +242,7 @@ def evaluate(data_loader, model, flips=None):
 
     image_feat_list = torch.cat(image_feat_list, dim=0)
     # draw_tsne(image_feat_list)
-    draw_tsne(torch.cat(text_feat_list, dim=0))
+    draw_tsne(image_feat_list)
     # TODO: save also predictions
     return ave_score_orig, ave_score, total, all_true, preds, errors
             
@@ -256,7 +258,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    visual_json_path = os.path.join('../data', 'annotations', 'panoptic_train2017.json')
     model_url = args.model_url
     # load model
     print("Loading CLIP model...")
@@ -264,7 +266,7 @@ if __name__ == "__main__":
     processor = AutoProcessor.from_pretrained(model_url)
     model = AutoModel.from_pretrained(model_url)
 
-    flips = ['vertical_flip']
+    flips = ['adaptive_flip']
     
     json_path = os.path.join('data', 'data_files', 'all_vsr_validated_data.jsonl') # 10119 image text pairs
     img_path = os.path.join('data', 'images') # changes to images
@@ -273,7 +275,10 @@ if __name__ == "__main__":
         os.path.join('../', img_path),
         os.path.join('../', json_path),
         filter_relations=relations,
-        flips=flips
+        flips=flips,
+        visual_prompt=False,
+        synonym_objects=True,
+        visual_json_path=visual_json_path,
     )
     # dataset = ImageTextClassificationDataset(img_path, json_path, filter_relations=relations, flips=[])
 

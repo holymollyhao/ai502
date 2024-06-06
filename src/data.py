@@ -1,11 +1,12 @@
-
 import os
 import json
 from PIL import Image, ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True 
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 from torch.utils.data import Dataset
-from util import horizontal_flip, vertical_flip, scale_down, scale_up
-spatial_relation = ['at the right side of', 'at the left side of', 'left of', 'right of', 'above', 'below']
+from util import horizontal_flip, vertical_flip, scale_down, scale_up, rotate, center_crop, draw_circle
+import requests
+
 negate = {
     # Adjacency
     "adjacent to": "nonadjacent to",
@@ -82,7 +83,7 @@ negate = {
 }
 
 negate_horizontal_flip = {
-    'at the right side of': 'at the left side of', 
+    'at the right side of': 'at the left side of',
     'at the left side of': 'at the right side of',
     'left of': 'right of',
     'right of ': 'left of',
@@ -94,7 +95,7 @@ negate_horizontal_flip = {
 }
 
 negate_vertical_flip = {
-    'at the right side of': 'at the right side of', 
+    'at the right side of': 'at the right side of',
     'at the left side of': 'at the left side of',
     'left of': 'left of',
     'right of ': 'right of',
@@ -117,7 +118,7 @@ adaptive_relation_set = {
     'below': 'above'
 }
 
-adaptive_augmentation ={
+adaptive_augmentation = {
     'at the right side of': horizontal_flip,
     'at the left side of': horizontal_flip,
     'left of': horizontal_flip,
@@ -129,28 +130,19 @@ adaptive_augmentation ={
     'below': vertical_flip
 }
 
-synonym_relation_set = {
-    'at the right side of': ['right beside', 'on the right of', 'to the right of'],
-    'at the left side of': ['left beside', 'on the left of', 'to the left of'],
-    'left of': ['on the left', 'to the left of', 'leftward of'],
-    'right of': ['on the right', 'to the right of', 'rightward of'],
-    'near': ['close to', 'nearby', 'adjacent to'],
-    'close to': ['near', 'next to', 'alongside'],
-    'far from': ['distant from', 'away from', 'not near'],
-    'above': ['over', 'on top of', 'higher than'],
-    'below': ['under', 'beneath', 'lower than']
-}
-
 
 # load image in real time version
 class ImageTextClassificationDataset(Dataset):
-    def __init__(self, img_path, json_path, vilt_processor=None, filter_relations=None, flips=[]): 
+    def __init__(self, img_path, json_path, vilt_processor=None, filter_relations=None, flips=[], negation=False,
+                 visual_prompt=False, visual_json_path=None, synonym_objects=False):
         self.img_path = img_path
 
         self.imgs = {}
+        self.negation = negation
 
         self.data_json = []
         self.flips = flips
+        self.visual_prompt = visual_prompt
         with open(json_path, "r") as f:
             lines = f.readlines()
             for line in lines:
@@ -159,8 +151,57 @@ class ImageTextClassificationDataset(Dataset):
                     # do not add!
                     continue
                 self.data_json.append(j_line)
-    
-            
+        if self.visual_prompt:
+            self.id_category_map = dict()
+            self.image_name_to_data = dict()
+            with open(visual_json_path, "r") as f:
+                annot_data = json.load(f)
+            id_to_image_path = dict()
+            for img in annot_data['images']:
+                id_to_image_path[img['id']] = img['file_name']
+            for annot in annot_data['annotations']:
+                self.image_name_to_data[id_to_image_path[annot['image_id']]] = annot['segments_info']
+            for cat in annot_data['categories']:
+                self.id_category_map[cat['id']] = cat['name']
+            # print(self.id_category_map)
+
+            with open(visual_json_path.replace("train", "val"), "r") as f:
+                annot_data = json.load(f)
+            id_to_image_path = dict()
+            for img in annot_data['images']:
+                id_to_image_path[img['id']] = img['file_name']
+            for annot in annot_data['annotations']:
+                self.image_name_to_data[id_to_image_path[annot['image_id']]] = annot['segments_info']
+            for cat in annot_data['categories']:
+                self.id_category_map[cat['id']] = cat['name']
+            # print(self.id_category_map)
+        self.synonym_objects = synonym_objects
+
+    def get_bbox(self, data_point):
+        if 'subj' in data_point:
+            names = [data_point['subj'], data_point['obj']]
+        else:
+            tmp_names = data_point['caption'].split(f"is {data_point['relation']}")
+            names = [name[4:-1].strip() for name in tmp_names]
+        target_img = data_point['image']
+        if target_img not in self.image_name_to_data:
+            bbox = [None, None]
+            print("WARNING", target_img)
+        else:
+            segments_info = self.image_name_to_data[target_img]
+            bbox = [None, None]
+            for seg in segments_info:
+                if self.id_category_map[seg['category_id']] == names[0]:
+                    x, y, w, h = seg['bbox']
+                    bbox[0] = [x, y, x + w, y + h]
+                if self.id_category_map[seg['category_id']] == names[1]:
+                    x, y, w, h = seg['bbox']
+                    bbox[1] = [x, y, x + w, y + h]
+            # if None in bbox:
+            #     print(bbox, names)
+            #     import pdb;pdb.set_trace()
+        return bbox
+
     def __getitem__(self, idx):
         data_point = self.data_json[idx]
         relation = data_point["relation"]
@@ -177,9 +218,8 @@ class ImageTextClassificationDataset(Dataset):
         # stopwords = ['the']
         stopwords = []
         # remove stop words
-        full_subject_a  = [word for word in full_subject_a.split() if word.lower() not in stopwords]
-        full_subject_b  = [word for word in full_subject_b.split() if word.lower() not in stopwords]
-
+        full_subject_a = [word for word in full_subject_a.split() if word.lower() not in stopwords]
+        full_subject_b = [word for word in full_subject_b.split() if word.lower() not in stopwords]
 
         # move modifier to the predicate
         modifier = [word for word in full_subject_a if word in ['is']]
@@ -197,46 +237,69 @@ class ImageTextClassificationDataset(Dataset):
         full_subject_a = " ".join(full_subject_a)
         full_subject_b = " ".join(full_subject_b)
 
+        if self.synonym_objects:
+            full_subject_a = self.get_synonym_objects(full_subject_a).join(', ')
+            full_subject_b = self.get_synonym_objects(full_subject_b).join(', ')
+
+        if self.visual_prompt:
+            # full_subject_a = full_subject_a + ' in red circle'
+            # full_subject_b = full_subject_b + ' in blue circle'
+
+            full_subject_a = 'red circle around ' + full_subject_a
+            full_subject_b = 'blue circle around ' + full_subject_b
+
+            # full_subject_a = 'red circle'
+            # full_subject_b = 'blue circle'
+
+
+
         # contains
         stopwords = ['the', 'is']
 
-        if 'adaptive_flip' in self.flips:
-            captions = [
-                # false case first
-                full_subject_a + ' ' + negative_relation + ' ' +  full_subject_b,
-                full_subject_a + ' ' +  relation + ' ' +  full_subject_b,
-            ]
-        else:
-            captions = [
-                # false case first
-                full_subject_a + ' ' +  relation,
-                full_subject_a + ' ' +  relation + ' ' +  full_subject_b,
-            ]
+        # if 'adaptive_flip' in self.flips:
+        #     captions = [
+        #         # false case first
+        #         full_subject_a + ' "' + negative_relation + '"' + full_subject_b,
+        #         full_subject_a + ' "' + relation + '" ' + full_subject_b,
+        #     ]
+        # else:
+        captions = [
+            # false case first
+            full_subject_a + ' "' + negative_relation + '"' + full_subject_b,
+            full_subject_a + ' "' + relation + '" ' + full_subject_b,
+        ]
 
+        if 'rotate' in self.flips or 'center_crop' in self.flips:
+            for _ in range(2):
+                captions.extend([
+                    # false case first
+                    full_subject_a + ' "' + relation + '"',
+                    full_subject_a + ' "' + relation + '" ' + full_subject_b,
+                ])
         if 'vertical_flip' in self.flips:
             captions.extend(
                 [
-                # false case first
-                full_subject_a + ' ' +  vertical_relation,
-                full_subject_a + ' ' +  vertical_relation + ' ' +  full_subject_b,
+                    # false case first
+                    full_subject_a + ' "' + vertical_relation + '"',
+                    full_subject_a + ' "' + vertical_relation + '" ' + full_subject_b,
                 ]
             )
 
         if 'horizontal_flip' in self.flips:
             captions.extend(
                 [
-                # false case first
-                full_subject_a + ' ' +  horizontal_relation,
-                full_subject_a + ' ' +  horizontal_relation + ' ' +  full_subject_b,
+                    # false case first
+                    full_subject_a + ' "' + horizontal_relation + '"',
+                    full_subject_a + ' "' + horizontal_relation + '" ' + full_subject_b,
                 ]
             )
-
+        #
         if 'adaptive_flip' in self.flips:
             captions.extend(
                 [
-                # false case first
-                full_subject_a + ' ' +  relation + ' ' + full_subject_b,
-                full_subject_a + ' ' +  adaptive_relation + ' ' +  full_subject_b,
+                    # false case first
+                    full_subject_a + ' "' + relation + '" ' + full_subject_b,
+                    full_subject_a + ' "' + adaptive_relation + '" ' + full_subject_b,
                 ]
             )
 
@@ -244,9 +307,21 @@ class ImageTextClassificationDataset(Dataset):
         img_path = os.path.join(self.img_path, data_point["image"])
         image = Image.open(img_path)
 
+        if self.visual_prompt:
+            bbox = self.get_bbox(data_point=data_point)
+            if bbox[0] != None:
+                image = draw_circle(image=image, bbox=bbox[0], color="red")
+            else:
+                print("No red")
+            if bbox[1] != None:
+                image = draw_circle(image=image, bbox=bbox[1], color="blue")
+            else:
+                print("No blue")
+
         images = [
             image,
         ]
+
         if 'vertical_flip' in self.flips:
             images.append(vertical_flip(image))
 
@@ -256,83 +331,24 @@ class ImageTextClassificationDataset(Dataset):
         if 'adaptive_flip' in self.flips:
             images.append(adaptive_flip(image))
 
-        return images, captions, data_point["label"], data_point["image"],  data_point["relation"]
+        if 'rotate' in self.flips:
+            images.append(rotate(image, degree=-15))
+            images.append(rotate(image, degree=15))
+
+        if 'center_crop' in self.flips:
+            images.append(center_crop(image, crop_factor=0.5))
+            images.append(center_crop(image, crop_factor=0.8))
+
+        return images, captions, data_point["label"], data_point["image"], data_point["relation"]
 
     def __len__(self):
         return len(self.data_json)
 
-    # def __getitem__(self, idx):
-    #     data_point = self.data_json[idx]
-    #     stopwords = ['the', 'is']
-    #     relation = data_point["relation"]
-    #     adaptive_relation = adaptive_relation_set[relation]
-    #     adaptive_flip = adaptive_augmentation[relation]
-    #
-    #
-    #     subject_a = data_point["caption"].split(' ' + relation + ' ')[0]
-    #     subject_b = data_point["caption"].split(' ' + relation + ' ')[1]
-    #     subject_a = [word for word in subject_a.split() if word.lower() not in stopwords][0].strip(".")
-    #     subject_b = [word for word in subject_b.split() if word.lower() not in stopwords][0].strip(".")
-    #
-    #
-    #     used_relation = []
-    #     # use negative dict
-    #     captions = self.ret_caption(subject_a, subject_b, relation, negate[relation])
-    #     used_relation.append(relation)
-    #
-    #
-    #     if 'adaptive_flip' in self.flips:
-    #         captions.extend(self.ret_caption(subject_a, subject_b, relation, adaptive_relation))
-    #         used_relation.append(adaptive_relation_set[relation])
-    #
-    #     if 'synonym' in self.flips:
-    #         updated_captions = []
-    #         for idx, rel in enumerate(used_relation):
-    #             synonm_true = synonym_relation_set[rel]
-    #             synonm_false = synonym_relation_set[negate[rel]]
-    #             appending_caption_list = captions[2*idx : 2*idx+2]
-    #             for true_rel, false_rel in zip(synonm_true, synonm_false):
-    #                 appending_caption_list.extend(self.ret_caption(subject_a, subject_b, false_rel, true_rel))
-    #             updated_captions.extend(appending_caption_list)
-    #         captions = updated_captions
-    #
-    #     # load Image
-    #     img_path = os.path.join(self.img_path, data_point["image"])
-    #     # image = cv2.imread(img_path)
-    #     images = []
-    #     images.append(Image.open(img_path))
-    #
-    #     if 'adaptive_flip' in self.flips:
-    #         images.append(adaptive_flip(Image.open(img_path)))
-    #
-    #     # import matplotlib.pyplot as plt
-    #     # plt.imshow(images[0])
-    #     # plt.show()
-    #
-    #     # plt.imshow(images[1])
-    #     # plt.show()
-    #
-    #     return images, captions, data_point["label"], data_point["image"], data_point["relation"]
-    #     # return self.imgs[data_point["image"]], captions, data_point["label"]
-    #     # return self.imgs[data_point["image"]], data_point["caption"], data_point["label"]
-    # 
-
-    def ret_caption(self, obj1, obj2, rel1, rel2):
-        if rel2 in spatial_relation:
-            ret_list = [
-                # false case first
-                obj2 + ' ' + rel2 ,
-
-                # ture case second
-                obj1 + ' ' + rel2 + ' ' + obj2,
-            ]
+    def get_synonym_objects(self, object, topn=3):
+        import gensim.downloader as api
+        model = api.load('word2vec-google-news-300')
+        print(object)
+        if object in model:
+            return [object] + [synonym for synonym, _ in model.most_similar(object, topn=topn)]
         else:
-            ret_list = [
-                # false case first
-                obj1 + ' ' + rel1 ,
-
-                # ture case second
-                obj1 + ' ' + rel2 + ' ' + obj2,
-            ]
-        return ret_list
-
+            return [object]

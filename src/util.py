@@ -1,4 +1,26 @@
-from PIL import Image
+from PIL import Image, ImageDraw
+def draw_circle(image: Image, bbox: list, color="red", width=10, center_circle=False):
+    image = image.copy()
+    if center_circle:
+        x0, y0, x1, y1 = bbox
+        ctx_x, ctx_y = round((x0+x1)/2), round((y0+y1)/2)
+        w, h = x1 - x0, y1 - y0
+        radius = round(min(w, h) / 2)
+        bbox = [ctx_x - radius, ctx_y - radius, ctx_x + radius, ctx_y + radius]
+    image = ImageDraw.Draw(image)
+    image.ellipse(bbox, outline=color, width=width)
+    return image._image
+
+def center_crop(image: Image, crop_factor: float = 0.5):
+    width, height = image.size
+    new_width = int(width * crop_factor)
+    new_height = int(height * crop_factor)
+    new_width, new_height = max(new_height, new_width), max(new_height, new_width)
+    x0 = round(width / 2 - new_width / 2)
+    y0 = round(height / 2 - new_height / 2)
+    x1 = round(width / 2 + new_width / 2)
+    y1 = round(height / 2 + new_height / 2)
+    return image.crop((x0, y0, x1, y1))
 
 def rotate(image: Image, degree: float, expand:bool=False):
     return image.rotate(degree, expand)
