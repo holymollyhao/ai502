@@ -13,7 +13,7 @@ from torch.optim import Adam, Adadelta, Adamax, Adagrad, RMSprop, Rprop, SGD
 from torch.cuda.amp import autocast, GradScaler
 from transformers import AutoConfig, BertTokenizer, VisualBertModel, \
     VisualBertForVisualReasoning, LxmertForPreTraining, LxmertTokenizer
-from data import ImageTextClassificationDataset, negate_horizontal_flip
+from data import ImageTextClassificationDataset, negate_horizontal_flip, relation_to_subcategory
 import torch.nn.functional as F
 # from eval import evaluate
 # from lxmert_for_classification import LxmertForBinaryClassification
@@ -28,49 +28,81 @@ def transform_labels_for_split(binary_labels, num_texts_per_image):
         unique_labels.append(unique_label if label == 1 else unique_label + 1)
     return torch.tensor(unique_labels)
 
-def evaluate(data_loader, model, flips=[]):
+def evaluate(data_loader, model, flips=[], filter_relations=None):
     model.cuda()
     model.eval()
 
     correct_orig = 0
     correct, total, all_true = 0, 0, 0
+    correct_per_category = {}
     preds = []
     errors = list()
-
+    tot_val_loss = 0
     for i, data in tqdm(enumerate(data_loader), total=len(data_loader)):
         input_ids, pixel_values, y, captions, filenames, relation_names = data
         y = y.cuda()
+
+        if filter_relations is not None:
+            filter_idx_list = [idx for idx, relation in enumerate(relation_names) if relation in filter_relations]
 
         with torch.no_grad():
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             batch_cap = input_ids.cuda()
             batch_img = pixel_values.cuda()
-            outputs = model(input_ids=batch_cap,
-                pixel_values=batch_img)
-
+            # print('Batch shape')
+            # print(batch_cap.shape, batch_img.shape)
+            outputs = model(input_ids=batch_cap, pixel_values=batch_img)
+        assert len(outputs.text_embeds) == len(batch_cap)
         # reproduce huggingface webapp
         image_features = outputs.image_embeds
         text_features = outputs.text_embeds
+        # print('Image and Text shape')
+        # print(image_features.shape, text_features.shape)
 
+        # If reshaping is necessary, ensure it aligns with your logic
         text_features = text_features.view(-1, 2, text_features.shape[-1])
+        if text_features.dim() == 2:
+            text_features = text_features.unsqueeze(0)
+        if image_features.dim() == 1:
+            image_features = image_features.unsqueeze(0)
 
-        # Compute raw scores using matrix multiplication
-        # print(text_features.shape, image_features.shape)
-        scores = torch.bmm(image_features.unsqueeze(1), text_features.transpose(1, 2)).view(-1, 2)
-        # print(scores)
+        score_list = []
+        # print('Image and Text shape')
+        # print(image_features.shape, text_features.shape)
+        for j in range(len(image_features)):
+            scores = image_features[j] @ text_features[j].T * 100
+            score_list.append(scores)
+
+        scores = torch.stack(score_list, dim=0).softmax(dim=-1)
         preds = scores.squeeze().argmax(-1)
 
-        # print(preds)
+        valid_loss = F.cross_entropy(scores, y.squeeze().long())
+        tot_val_loss += valid_loss.item()
         sum_list = [1 if preds[i] == y[i] else 0 for i in range(len(y))]
-        sum_list = [i for idx, i in enumerate(sum_list) if idx%(len(flips)+1) == 0]
+
+        correct_full += int(torch.sum(torch.tensor(sum_list)))
+        total_full += len(sum_list)
+
+        if filter_relations is not None:
+            for relation, correct in zip(relation_names, sum_list):
+                subcategory = relation_to_subcategory[relation]
+
+            sum_list = [i for idx, i in enumerate(sum_list) if idx in filter_idx_list and idx%(len(flips)+1) == 0]
+        else:
+            sum_list = [i for idx, i in enumerate(sum_list) if idx%(len(flips)+1) == 0]
         sum_list = torch.tensor(sum_list)
         # print(y)
         correct_this_batch = int(torch.sum(sum_list))
         # print(correct_this_batch)
         correct += correct_this_batch
-        total += y.shape[0] // (len(flips) + 1)
+        total += len(sum_list)
 
     ave_score = correct / float(total)
+    val_loss = tot_val_loss / len(data_loader)
+    wandb.log({"val_loss": val_loss})
+
+    ave_score_full = correct_full / float(total_full)
+    wandb.log({"eval_full": ave_score_full})
 
     return ave_score
 
@@ -80,7 +112,7 @@ def set_grad(model, requires_grad):
         param.requires_grad = False
 
     # Unfreeze the parameters of the text embeddings
-    for param in model.text_model.embeddings.token_embedding.parameters():
+    for param in model.text_model.parameters():
         param.requires_grad = requires_grad
 
     # for param in model.text_model.embeddings.position_embedding.parameters():
@@ -95,10 +127,10 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
 
     model.cuda()
     model.train()
-    # acc = evaluate(val_loader, model, flips=flip)
-    # print("Initial validation accuracy: ", acc)
-    # if args.wandb:
-    #     wandb.log({"eval_acc": acc})
+    acc = evaluate(val_loader, model, flips=flip, filter_relations=negate_horizontal_flip.keys())
+    print("Initial validation accuracy: ", acc)
+    if args.wandb:
+        wandb.log({"eval_acc": acc})
 
     for i, data in tqdm(enumerate(train_loader), total=len(train_loader)):
         optimizer.zero_grad()
@@ -176,18 +208,6 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
 
                 image_features = outputs.image_embeds
                 text_features = outputs.text_embeds
-                # text_features = text_features.view(-1, 2, text_features.shape[-1])
-
-                # aligned_y = []
-                # for idx, single_y in enumerate(y):
-                #     aligned_y.append((idx // 2) * 2 + single_y)
-
-                # if len(flips) == 0:
-                #     aligned_y = torch.tensor(aligned_y).cuda()
-                #     scores = 100 * image_features @ text_features.T  # num_image * num_text
-                #     scores = scores.softmax(dim=-1)
-                #     loss = torch.nn.CrossEntropyLoss()(scores, aligned_y.squeeze().long())
-                # else:
                 scores = 100 * image_features @ text_features.T  # num_image * num_text
                 labels = torch.zeros_like(scores).long()
 
@@ -197,34 +217,27 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
                 for idx in range(len(flip) + 1):
                     selected_images = image_features[idx::len(flip) + 1]
                     selected_text = text_features[idx::len(flip) + 1].reshape(-1, text_features.shape[-1])
-                    # print(selected_images.shape, selected_text.shape)
-                    selected_captions = captions[idx::len(flip) + 1]
-                    # print(selected_captions)
-                    selected_labels = []
 
+                    selected_labels_text = []
                     for j in range(len(selected_images)):
-                        # print(j)
                         select_idx = idx + j * (len(flip) + 1)
-                        selected_labels.append(y[select_idx] + (j * 2))
-                    selected_labels = torch.tensor(selected_labels).cuda().long()
-                    # import pdb
-                    # pdb.set_trace()
-                    # print(torch.max(selected_labels))
-                    # print(selected_images.shape, selected_text.shape, selected_labels.shape)
-                    # print(selected_labels)
-                    scores = 100 * selected_images @ selected_text.T
-                    total_loss += F.cross_entropy(scores, selected_labels.squeeze().long())
+                        selected_labels_text.append(y[select_idx] + (j * 2))
+
+                    selected_labels_image = []
+                    for j in range(len(selected_images)):
+                        selected_labels_image.append(j)
+
+                    selected_labels_text = torch.tensor(selected_labels_text).cuda().long()
+                    selected_labels_image = torch.tensor(selected_labels_image).cuda().long()
+
+                    text_scores = 100 * selected_images @ selected_text.T
+                    image_scores = 100 * selected_text[selected_labels_text] @ selected_images.T
+
+                    text_loss = F.cross_entropy(text_scores.softmax(-1), selected_labels_text)
+                    image_loss = F.cross_entropy(image_scores.softmax(-1), selected_labels_image)
+                    total_loss += text_loss + image_loss
+
                 loss = total_loss
-
-                # Compute raw scores using matrix multiplication
-                # scores = 100 * torch.bmm(image_features.unsqueeze(1), text_features.transpose(1, 2)).view(-1, 2)
-                # scores = scores.softmax(dim=-1)
-                # loss = torch.nn.CrossEntropyLoss()(scores, y.squeeze().long())
-                # print(loss.item())
-                # logits = outputs.logits
-                # idx = logits.argmax(-1).item()
-                # model.config.id2label[idx]
-
         if args.wandb:
             wandb.log({"loss": loss})
 
@@ -248,25 +261,10 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
         train_steps += 1
         step_global += 1
 
-        # save model every K iterations
-        # if step_global % args.checkpoint_step == 0:
-        #     checkpoint_dir = os.path.join(args.output_dir, f"checkpoint_iter_{step_global}")
-        #     if not os.path.exists(checkpoint_dir):
-        #         os.makedirs(checkpoint_dir)
-        #     if model_type == "visualbert":
-        #         model.save_pretrained(checkpoint_dir)
-        #     elif model_type == "lxmert":
-        #         model.lxmert.save_pretrained(checkpoint_dir)
-        #     elif model_type == "vilt":
-        #         processor.save_pretrained(checkpoint_dir)
-        #         model.save_pretrained(checkpoint_dir)
-        #     elif model_type == "clip":
-        #         torch.save(model.state_dict(), os.path.join(checkpoint_dir, "ckpt.pt"))
-
         # evaluate and save
         if step_global % args.eval_step == 0:
             # evaluate
-            acc = evaluate(val_loader, model, flips=flip)
+            acc = evaluate(val_loader, model, flips=flip, filter_relations=negate_horizontal_flip.keys())
             print(f"====== evaliuate ======")
             print(f"epoch: {epoch}, global step: {step_global}, val performance: {acc}")
             print(f"=======================")
@@ -304,7 +302,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_path', type=str, default="openai/clip-vit-large-patch14-336")
     parser.add_argument('--lr', type=float, default=2e-5)
     parser.add_argument('--epoch', type=int, default=100)
-    parser.add_argument('--eval_step', type=int, default=100)
+    parser.add_argument('--eval_step', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--amp', action="store_true", \
                         help="automatic mixed precision training")
@@ -414,7 +412,9 @@ if __name__ == "__main__":
             inputs = processor(captions[item_idx], images=imgs[item_idx], return_tensors="pt", padding='max_length')
             input_ids = inputs.input_ids
             pixel_values = inputs.pixel_values
-            pixel_values = pixel_values.repeat(input_ids.shape[0] // (2 * pixel_values.shape[0]), 1, 1, 1)
+
+
+            # pixel_values = pixel_values.repeat(input_ids.shape[0] // (2 * pixel_values.shape[0]), 1, 1, 1)
 
             # Create a tensor from labels[item_idx] and cast it to torch.int8
             expanded_label = torch.tensor(labels[item_idx], dtype=torch.int8).repeat(input_ids.shape[0] // 2, 1)
@@ -423,7 +423,7 @@ if __name__ == "__main__":
             input_id_list.append(input_ids)
             pixel_value_list.append(pixel_values)
             labels_list.append(expanded_label)
-            caption_list.extend(captions[item_idx])
+            caption_list.append(captions[item_idx])
         input_ids = torch.cat(input_id_list, dim=0).view(-1, 2, input_ids.shape[-1])
         pixel_values = torch.cat(pixel_value_list, dim=0)
         labels = torch.cat(labels_list, dim=0)
@@ -437,7 +437,8 @@ if __name__ == "__main__":
 
 
     img_feature_path = args.img_feature_path
-    relations = list(negate_horizontal_flip.keys())
+    # relations = list(negate_horizontal_flip.keys())
+    relations = None
     dataset_train = ImageTextClassificationDataset(img_feature_path, args.train_json_path, filter_relations=relations, flips=flip)
     dataset_val = ImageTextClassificationDataset(img_feature_path, args.val_json_path, filter_relations=relations, flips=flip)
 

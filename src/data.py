@@ -4,8 +4,106 @@ from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from torch.utils.data import Dataset
-from util import horizontal_flip, vertical_flip, scale_down, scale_up, rotate, center_crop, draw_circle
+from util import horizontal_flip, vertical_flip, scale_down, scale_up, rotate, center_crop, draw_circle, adjust_color
 import requests
+
+relation_to_subcategory = {
+    "adjacent to": "adjacency",
+    "alongside": "adjacency",
+    "at the side of": "adjacency",
+    "attached to": "adjacency",
+    "connected to": "adjacency",
+    "detached from": "adjacency",
+    "touching": "adjacency",
+    "next to": "adjacency",
+    "beside": "adjacency",
+
+    "at the right side of": "directional",
+    "at the left side of": "directional",
+    "at the back of": "directional",
+    "ahead of": "directional",
+    "off": "directional",
+    "past": "directional",
+    "toward": "directional",
+    "down": "directional",
+    "down from": "directional",
+    "facing": "directional",
+    "facing away from": "directional",
+    "parallel to": "directional",
+    "perpendicular to": "directional",
+    "by": "directional",
+    "above": "directional",
+    "below": "directional",
+    "behind": "directional",
+    "under": "directional",
+    "over": "directional",
+    "left of": "directional",
+    "right of": "directional",
+    "in front of": "directional",
+    "beneath": "directional",
+
+    "at the edge of": "orientation",
+    "along": "orientation",
+    "around": "orientation",
+    "into": "orientation",
+    "across": "orientation",
+    "across from": "orientation",
+    "by": "orientation",
+    "between": "orientation",
+    "beyond": "orientation",
+    "opposite to": "orientation",
+    "on top of": "orientation",
+
+    "close to": "proximity",
+    "near": "proximity",
+    "far from": "proximity",
+    "far away from": "proximity",
+    "within": "proximity",
+    "at": "proximity",
+    "on": "proximity",
+    "in": "proximity",
+    "with": "proximity",
+    "surrounding": "proximity",
+    "among": "proximity",
+    "out of": "proximity",
+    "inside": "proximity",
+    "outside": "proximity",
+    "enclosed by": "proximity",
+
+    "has as a part": "topological",
+    "part of": "topological",
+    "contains": "topological",
+    "consists of": "topological",
+    "congruent": "topological",
+    "not adjacent to": "topological",
+    "away from": "topological",
+    "disconnect from": "topological",
+    "far from the edge of": "topological",
+    "not along": "topological",
+    "not around": "topological",
+    "not into": "topological",
+    "not across": "topological",
+    "up from": "topological",
+    "perpendicular to": "topological",
+    "far away from": "topological",
+    "does not have a part": "topological",
+    "not part of": "topological",
+    "does not contain": "topological",
+    "outside": "topological",
+    "not at": "topological",
+    "not on": "topological",
+    "not in": "topological",
+    "not with": "topological",
+    "not surrounding": "topological",
+    "not among": "topological",
+    "does not consists of": "topological",
+    "not out of": "topological",
+    "not between": "topological",
+    "inside": "topological",
+    "not touching": "topological",
+    "not enclosed by": "topological",
+    "incongruent": "topological",
+}
 
 negate = {
     # Adjacency
@@ -66,7 +164,6 @@ negate = {
     "next to": "far from",
     "opposite to": "same as",
     "enclosed by": "not enclosed by",
-    # missing
     "above": "below",
     "below": "above",
     "behind": "infront",
@@ -205,11 +302,21 @@ class ImageTextClassificationDataset(Dataset):
     def __getitem__(self, idx):
         data_point = self.data_json[idx]
         relation = data_point["relation"]
-        vertical_relation = negate_vertical_flip[relation]
-        horizontal_relation = negate_horizontal_flip[relation]
+
+        try:
+            vertical_relation = negate_vertical_flip[relation]
+            horizontal_relation = negate_horizontal_flip[relation]
+            adaptive_relation = adaptive_relation_set[relation]
+            adaptive_flip = adaptive_augmentation[relation]
+
+        except KeyError:
+            vertical_relation = relation
+            horizontal_relation = relation
+            adaptive_relation = relation
+            adaptive_flip = adjust_color
+
         negative_relation = negate[relation]
-        adaptive_relation = adaptive_relation_set[relation]
-        adaptive_flip = adaptive_augmentation[relation]
+        negative_adaptive_relation = negate[adaptive_relation]
 
         full_subject_a = data_point["caption"].split(' ' + relation + ' ')[0]
         full_subject_b = data_point["caption"].split(' ' + relation + ' ')[1]
@@ -265,7 +372,7 @@ class ImageTextClassificationDataset(Dataset):
         # else:
         captions = [
             # false case first
-            full_subject_a + ' "' + negative_relation + '"' + full_subject_b,
+            full_subject_a + ' "' + negative_relation + '" ' + full_subject_b,
             full_subject_a + ' "' + relation + '" ' + full_subject_b,
         ]
 
@@ -295,13 +402,22 @@ class ImageTextClassificationDataset(Dataset):
             )
         #
         if 'adaptive_flip' in self.flips:
+            # if adaptive_relation == relation:
             captions.extend(
                 [
                     # false case first
-                    full_subject_a + ' "' + relation + '" ' + full_subject_b,
+                    full_subject_a + ' "' + negative_adaptive_relation + '" ' + full_subject_b,
                     full_subject_a + ' "' + adaptive_relation + '" ' + full_subject_b,
                 ]
             )
+            # else:
+            #     captions.extend(
+            #         [
+            #             # false case first
+            #             full_subject_a + ' "' + adaptive_relation + '" ' + full_subject_b,
+            #             full_subject_a + ' "' + negative_adaptive_relation + '" ' + full_subject_b,
+            #         ]
+            #     )
 
         # load Image
         img_path = os.path.join(self.img_path, data_point["image"])

@@ -1,4 +1,4 @@
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance
 def draw_circle(image: Image, bbox: list, color="red", width=10, center_circle=False):
     image = image.copy()
     if center_circle:
@@ -44,3 +44,7 @@ def scale_up(image: Image.Image, scale_factor: float = 1.5):
     new_width = int(width * scale_factor)
     new_height = int(height * scale_factor)
     return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+def adjust_color(image: Image.Image, factor: float):
+    enhancer = ImageEnhance.Color(image)
+    return enhancer.enhance(factor)
