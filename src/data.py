@@ -4,8 +4,7 @@ from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from torch.utils.data import Dataset
-from util import horizontal_flip, vertical_flip, scale_down, scale_up, rotate, center_crop, draw_circle, adjust_color, zoom_image, no_change
-import requests
+from util import *
 
 relation_to_subcategory = {
     # Adjacency
@@ -257,7 +256,6 @@ class ImageTextClassificationDataset(Dataset):
                 self.image_name_to_data[id_to_image_path[annot['image_id']]] = annot['segments_info']
             for cat in annot_data['categories']:
                 self.id_category_map[cat['id']] = cat['name']
-            # print(self.id_category_map)
 
             with open(visual_json_path.replace("train", "val"), "r") as f:
                 annot_data = json.load(f)
@@ -342,11 +340,6 @@ class ImageTextClassificationDataset(Dataset):
             full_subject_a = self.get_synonym_objects(full_subject_a).join(', ')
             full_subject_b = self.get_synonym_objects(full_subject_b).join(', ')
 
-        if self.visual_prompt:
-            full_subject_a = 'red circle around ' + full_subject_a
-            full_subject_b = 'blue circle around ' + full_subject_b
-
-
 
         # contains
         stopwords = ['the', 'is']
@@ -382,7 +375,6 @@ class ImageTextClassificationDataset(Dataset):
             )
         #
         if 'relation_aware_flip' in self.flips:
-            # if relation_aware_relation == relation:
             captions.extend(
                 [
                     # false case first
@@ -397,14 +389,11 @@ class ImageTextClassificationDataset(Dataset):
         if self.visual_prompt:
             bbox = self.get_bbox(data_point=data_point)
             if bbox[0] != None:
-                image = draw_circle(image=image, bbox=bbox[0], color="red")
-            else:
-                print("No red")
+                image = draw_box(image=image, bbox=bbox[0], color="red")
             if bbox[1] != None:
-                image = draw_circle(image=image, bbox=bbox[1], color="blue")
-            else:
-                print("No blue")
-
+                image = draw_box(image=image, bbox=bbox[1], color="blue")
+            if bbox[0] != None and bbox[1] != None:
+                image = draw_arrow(image=image, bboxes=bbox)
         images = [
             image,
         ]

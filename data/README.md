@@ -1,4 +1,6 @@
 # Data 
+## Get VSR dataset
+The following sections include how to obtain VSR dataset, from the original [VSR repo](https://github.com/cambridgeltl/visual-spatial-reasoning).
 
 ### Download images
 We use a subset of COCO-2017's train and development images. The following script download COCO-2017's train and val sets images then put them into a single fodler `trainval2017/`.
@@ -50,3 +52,11 @@ Each line is an individual data point.
 ### Other data files
 [`data_files/`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/master/data/data_files) contain the major data collected for creating VSR. [`data_files/all_vsr_raw_data.jsonl`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/master/data/data_files/all_vsr_raw_data.jsonl) contains all 12,809 raw data points and [`data_files/all_vsr_validated_data.jsonl`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/master/data/data_files/all_vsr_validated_data.jsonl) contains the 10,119 data points that passed the second-round validation (and is used for creating the random and zeroshot splits). [`data_files/meta_data.csv`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/master/data/data_files/meta_data.jsonl) contains meta data of annotators.
 
+## Visual prompting dataset
+If you want to test visual prompting, you need to download panoptic semgnetation data from COCO
+```bash
+cd data/ # enter this folder 
+mkdir annotations
+cd annotations
+wget http://images.cocodataset.org/annotations/panoptic_annotations_trainval2017.zip
+```

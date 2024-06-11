@@ -1,13 +1,10 @@
 data/images/*
 data/features/*
-!data/features/README.md
 tmp/
 logs/
 wandb/
 __pycache__
 .ipython_checkpoints/
 data/trainval2017/
-src/clip/
-src/open-clip-torch/
-src/open-clip/
-src/taming-transformers/
+.idea
+data/annotations

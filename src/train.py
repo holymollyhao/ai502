@@ -1,22 +1,13 @@
 import os
-import cv2
-import json
-import wandb
 import argparse
-import numpy as np
-from copy import deepcopy
-import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 import torch
 import torch.optim as optim
-from torch.optim import Adam, Adadelta, Adamax, Adagrad, RMSprop, Rprop, SGD
 from torch.cuda.amp import autocast, GradScaler
 from transformers import AutoConfig, BertTokenizer, VisualBertModel, \
     VisualBertForVisualReasoning, LxmertForPreTraining, LxmertTokenizer
 from data import ImageTextClassificationDataset, negate_horizontal_flip, relation_to_subcategory
 import torch.nn.functional as F
-# from eval import evaluate
-# from lxmert_for_classification import LxmertForBinaryClassification
 
 def show_image(image, caption):
     import matplotlib.pyplot as plt
@@ -24,7 +15,6 @@ def show_image(image, caption):
     plt.imshow(np.transpose(image.cpu().numpy(), (1, 2, 0)))
     plt.title(caption)
     plt.show()
-
 
 # Function to transform binary labels to unique labels for a given split
 def transform_labels_for_split(binary_labels, num_texts_per_image):
@@ -59,7 +49,7 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
             batch_cap = input_ids.cuda()
             batch_img = pixel_values.cuda()
             outputs = model(input_ids=batch_cap, pixel_values=batch_img)
-        # assert len(outputs.text_embeds) == len(batch_cap)
+
         # reproduce huggingface webapp
         image_features = outputs.image_embeds
         text_features = outputs.text_embeds
@@ -72,8 +62,6 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
             image_features = image_features.unsqueeze(0)
 
         score_list = []
-        # print('Image and Text shape')
-        # print(image_features.shape, text_features.shape)
         for j in range(len(image_features)):
             scores = image_features[j] @ text_features[j].T * 100
             score_list.append(scores)
@@ -93,13 +81,11 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
                 correct_per_category[subcategory] += correct
                 total_per_category[subcategory] += 1
 
-                if subcategory == 'topological':
-                    print(relation, correct)
-                    show_image(pixel_values[k], captions[k])
+                # if subcategory == 'topological':
+                #     print(relation, correct)
+                #     show_image(pixel_values[k], captions[k])
 
-        # print(y)
         correct_this_batch = int(torch.sum(sum_list))
-        # print(correct_this_batch)
         correct += correct_this_batch
         total += len(sum_list)
 
@@ -186,7 +172,6 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
                     for idx, single_y in enumerate(y):
                         aligned_y.append(idx // 2 + single_y)
                     aligned_y = torch.tensor(aligned_y).cuda()
-                    print(y, aligned_y)
                     text_features = text_features.view(-1, 2, text_features.shape[-1])
 
                     # Compute raw scores using matrix multiplication
@@ -291,9 +276,10 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='train')
-    parser.add_argument('--img_feature_path', type=str, default='../data/trainval2017')
-    parser.add_argument('--train_json_path', type=str, default="/home/server17/taewon_workspace/ai502/data/splits/random/train.jsonl")
-    parser.add_argument('--val_json_path', type=str, default="/home/server17/taewon_workspace/ai502/data/splits/random/test.jsonl")
+    parser.add_argument('--img_feature_path', type=str, default='data/images')
+    parser.add_argument('--train_json_path', type=str, default="data/splits/random/train.jsonl")
+    parser.add_argument('--val_json_path', type=str, default="data/splits/random/test.jsonl")
+    parser.add_argument('--visual_json_path', type=str, default="data/annotations/panoptic_train2017.jsonl")
     parser.add_argument('--model_type', type=str, default="clip", help="visualbert or lxmert or vilt")
     parser.add_argument('--model_path', type=str, default="openai/clip-vit-large-patch14-336")
     parser.add_argument('--lr', type=float, default=2e-5)
@@ -305,11 +291,11 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default="clip_full_tune")
     parser.add_argument('--checkpoint_step', type=int, default=100)
     parser.add_argument('--random_seed', type=int, default=42)
-    parser.add_argument('--wandb', action="store_true", help="use wandb")
     parser.add_argument('--data_parallel', action="store_true", help="use data parallel")
     parser.add_argument('--cumulative_grad_steps', type=int, default=1)
     parser.add_argument('--flip_handler', type=str, default='none')
     parser.add_argument('--flips', nargs='+', default=[], help='A list of texts')
+    parser.add_argument('--visual_prompt', action='store_true')
 
     args = parser.parse_args()
 
@@ -390,12 +376,10 @@ if __name__ == "__main__":
         """
         labels = torch.tensor(labels)
         return inputs.input_ids, inputs.pixel_values, labels
-        # return torch.cat(inputs_ids, dim=0), torch.cat(pixel_values, dim=0), labels
 
 
     def collate_fn_batch_clip(batch):
         imgs, captions, labels, filenames, relations = zip(*batch)
-        # print(labels)
         input_id_list = []
         pixel_value_list = []
         labels_list = []
@@ -404,13 +388,8 @@ if __name__ == "__main__":
             inputs = processor(captions[item_idx], images=imgs[item_idx], return_tensors="pt", padding='max_length')
             input_ids = inputs.input_ids
             pixel_values = inputs.pixel_values
-
-
-            # pixel_values = pixel_values.repeat(input_ids.shape[0] // (2 * pixel_values.shape[0]), 1, 1, 1)
-
             # Create a tensor from labels[item_idx] and cast it to torch.int8
             expanded_label = torch.tensor(labels[item_idx], dtype=torch.int8).repeat(input_ids.shape[0] // 2, 1)
-            # print(expanded_label)
 
             input_id_list.append(input_ids)
             pixel_value_list.append(pixel_values)
@@ -423,17 +402,15 @@ if __name__ == "__main__":
 
 
     img_feature_path = args.img_feature_path
-    # relations = list(negate_horizontal_flip.keys())
     relations = None
-    visual_json_path = os.path.join('../data', 'annotations', 'panoptic_train2017.json')
     dataset_train = ImageTextClassificationDataset(
         img_feature_path,
         args.train_json_path,
         filter_relations=relations,
         flips=args.flips,
         remaining_flip_handler=args.flip_handler,
-        visual_prompt=False,
-        visual_json_path=visual_json_path
+        visual_prompt=args.visual_prompt,
+        visual_json_path=args.visual_json_path
     )
     dataset_val = ImageTextClassificationDataset(
         img_feature_path,
@@ -441,8 +418,8 @@ if __name__ == "__main__":
         filter_relations=relations,
         flips=args.flips,
         remaining_flip_handler=args.flip_handler,
-        visual_prompt=False,
-        visual_json_path=visual_json_path
+        visual_prompt=args.visual_prompt,
+        visual_json_path=args.visual_json_path
     )
 
     if model_type == "visualbert":

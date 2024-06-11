@@ -1,6 +1,8 @@
 # CLIP VSR
-I clean up the repository, based on the eval_002.py and data_002.py
+This is the code repository for 2024 Spring KAIST AI502 Deep Learning final project by Nayoung Oh, Taewon Kim, Anh Nguyen Thi Chung.
+
 ## Instalation
+Recommnend, generating anaconda env with python==3.8
 - Pillow
 - matplotlib
 - opencv_python
@@ -10,34 +12,23 @@ I clean up the repository, based on the eval_002.py and data_002.py
 - transformers
 - numpy
 
-## Data
-See [`data/`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/master/data) folder's readme. Images should be saved under `data/images/`.
+Tested with torch==2.0.1 and 2.3.0 / transformers=4.41.x
 
-## How to use
-```
-python src/eval.py
-```
+## Data
+See [`data/`](https://github.com/holymollyhao/ai502/tree/main/data) folder's readme.
 
 ### Run VP and RA-aug at once
-```
-. src/run_exp.sh
-```
-
-#### Download images
-See [`data/`](https://github.com/cambridgeltl/visual-spatial-reasoning/tree/master/data) folder's readme. Images should be saved under `data/images/`.
-
-
-### Citation
-If you use the VSR dataset please site the orginal authors:
-```bibtex
-@article{Liu2022VisualSR,
-  title={Visual Spatial Reasoning},
-  author={Fangyu Liu and Guy Edward Toh Emerson and Nigel Collier},
-  journal={ArXiv},
-  year={2022},
-  volume={abs/2205.00363}
-}
+```bash
+  sh src/run_exp.sh
 ```
 
-### License
-This project is licensed under the [Apache-2.0 License](https://github.com/cambridgeltl/visual-spatial-reasoning/blob/master/LICENSE).
+### Visualize attention
+```bash
+  sh src/run_visualize.sh
+```
+
+### Reference
+Some repositories used to develop
+- [VSR](https://github.com/cambridgeltl/visual-spatial-reasoning)
+- [CLIP VSR](https://github.com/Sohojoe/CLIP_visual-spatial-reasoning)
+- [Explainability](https://github.com/hila-chefer/Transformer-MM-Explainability)

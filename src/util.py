@@ -1,4 +1,7 @@
 from PIL import Image, ImageDraw, ImageEnhance
+import numpy as np
+import cv2
+
 def draw_circle(image: Image, bbox: list, color="red", width=10, center_circle=False):
     image = image.copy()
     if center_circle:
@@ -9,6 +12,25 @@ def draw_circle(image: Image, bbox: list, color="red", width=10, center_circle=F
         bbox = [ctx_x - radius, ctx_y - radius, ctx_x + radius, ctx_y + radius]
     image = ImageDraw.Draw(image)
     image.ellipse(bbox, outline=color, width=width)
+    return image._image
+
+def draw_arrow(image: Image, bboxes: list, width=10):
+    image = np.array(image)
+    points = []
+    for bbox in reversed(bboxes):
+        x0, y0, x1, y1 = bbox
+        ctx_x, ctx_y = round((x0+x1)/2), round((y0+y1)/2)
+        points.append((ctx_x, ctx_y))
+    image = cv2.arrowedLine(image, points[0], points[1], (0, 0, 0), width)
+    return Image.fromarray(image)
+
+def draw_box(image: Image, bbox: list, color="red", width=10, fill=False):
+    image = image.copy()
+    image = ImageDraw.Draw(image)
+    if fill:
+        image.rectangle(bbox, outline=color, fill=color, width=width)
+    else:
+        image.rectangle(bbox, outline=color, width=width)
     return image._image
 
 def center_crop(image: Image, crop_factor: float = 0.5):
