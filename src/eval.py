@@ -251,7 +251,7 @@ if __name__ == "__main__":
     # takes 10 min for evaluation
     
     parser = argparse.ArgumentParser(description='eval')
-    parser.add_argument('--model_url', type=str, default='openai/clip-vit-large-patch14-336')
+    parser.add_argument('--model_path', type=str)
     parser.add_argument('--output_preds', action='store_true')
     parser.add_argument('--is_original', action='store_true')
 
@@ -266,7 +266,7 @@ if __name__ == "__main__":
     processor = AutoProcessor.from_pretrained(model_url)
     model = AutoModel.from_pretrained(model_url)
 
-    flips = ['adaptive_flip']
+    flips = []
     
     json_path = os.path.join('data', 'data_files', 'all_vsr_validated_data.jsonl') # 10119 image text pairs
     img_path = os.path.join('data', 'images') # changes to images
@@ -280,6 +280,8 @@ if __name__ == "__main__":
         synonym_objects=True,
         visual_json_path=visual_json_path,
     )
+
+
     # dataset = ImageTextClassificationDataset(img_path, json_path, filter_relations=relations, flips=[])
 
 

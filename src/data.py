@@ -4,106 +4,83 @@ from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 from torch.utils.data import Dataset
-from util import horizontal_flip, vertical_flip, scale_down, scale_up, rotate, center_crop, draw_circle, adjust_color
+from util import horizontal_flip, vertical_flip, scale_down, scale_up, rotate, center_crop, draw_circle, adjust_color, zoom_image, no_change
 import requests
 
 relation_to_subcategory = {
+    # Adjacency
     "adjacent to": "adjacency",
     "alongside": "adjacency",
     "at the side of": "adjacency",
+    "at the right side of": "adjacency",
+    "at the left side of": "adjacency",
     "attached to": "adjacency",
-    "connected to": "adjacency",
-    "detached from": "adjacency",
-    "touching": "adjacency",
-    "next to": "adjacency",
-    "beside": "adjacency",
-
-    "at the right side of": "directional",
-    "at the left side of": "directional",
-    "at the back of": "directional",
-    "ahead of": "directional",
+    "at the back of": "adjacency",
+    "ahead of": "adjacency",
+    "against": "adjacency",
+    "at the edge of": "adjacency",
+    # Directional
     "off": "directional",
     "past": "directional",
     "toward": "directional",
     "down": "directional",
+    "away from": "directional",
+    "along": "directional",
+    "around": "directional",
+    "into": "directional",
+    "across": "directional",
+    "across from": "directional",
     "down from": "directional",
-    "facing": "directional",
-    "facing away from": "directional",
-    "parallel to": "directional",
-    "perpendicular to": "directional",
-    "by": "directional",
-    "above": "directional",
-    "below": "directional",
-    "behind": "directional",
-    "under": "directional",
-    "over": "directional",
-    "left of": "directional",
-    "right of": "directional",
-    "in front of": "directional",
-    "beneath": "directional",
-
-    "at the edge of": "orientation",
-    "along": "orientation",
-    "around": "orientation",
-    "into": "orientation",
-    "across": "orientation",
-    "across from": "orientation",
-    "by": "orientation",
-    "between": "orientation",
-    "beyond": "orientation",
-    "opposite to": "orientation",
-    "on top of": "orientation",
-
+    # Orientation
+    "facing": "orientation",
+    "facing away from": "orientation",
+    "parallel to": "orientation",
+    "perpendicular to": "orientation",
+    # Proximity
+    "by": "proximity",
     "close to": "proximity",
     "near": "proximity",
     "far from": "proximity",
     "far away from": "proximity",
-    "within": "proximity",
-    "at": "proximity",
-    "on": "proximity",
-    "in": "proximity",
-    "with": "proximity",
-    "surrounding": "proximity",
-    "among": "proximity",
-    "out of": "proximity",
-    "inside": "proximity",
-    "outside": "proximity",
-    "enclosed by": "proximity",
-
+    # Topological
+    "connected to": "topological",
+    "detached from": "topological",
     "has as a part": "topological",
     "part of": "topological",
     "contains": "topological",
+    "within": "topological",
+    "at": "topological",
+    "on": "topological",
+    "in": "topological",
+    "with": "topological",
+    "surrounding": "topological",
+    "among": "topological",
     "consists of": "topological",
-    "congruent": "topological",
-    "not adjacent to": "topological",
-    "away from": "topological",
-    "disconnect from": "topological",
-    "far from the edge of": "topological",
-    "not along": "topological",
-    "not around": "topological",
-    "not into": "topological",
-    "not across": "topological",
-    "up from": "topological",
-    "perpendicular to": "topological",
-    "far away from": "topological",
-    "does not have a part": "topological",
-    "not part of": "topological",
-    "does not contain": "topological",
-    "outside": "topological",
-    "not at": "topological",
-    "not on": "topological",
-    "not in": "topological",
-    "not with": "topological",
-    "not surrounding": "topological",
-    "not among": "topological",
-    "does not consists of": "topological",
-    "not out of": "topological",
-    "not between": "topological",
+    "out of": "topological",
+    "between": "topological",
     "inside": "topological",
-    "not touching": "topological",
-    "not enclosed by": "topological",
-    "incongruent": "topological",
+    "outside": "topological",
+    "touching": "topological",
+    # Unallocated
+    "beyond": "directional",
+    "next to": "proximity",
+    "opposite to": "directional",
+    "enclosed by": "topological",
+    "above": "directional",
+    "below": "directional",
+    "behind": "directional",
+    "on top of": "directional",
+    "under": "directional",
+    "over": "directional",
+    "left of": "orientation",
+    "right of": "orientation",
+    "in front of": "directional",
+    "beneath": "directional",
+    "beside": "proximity",
+    "in the middle of": "topological",
+    "congruent": "topological",
 }
+
 
 negate = {
     # Adjacency
@@ -167,7 +144,7 @@ negate = {
     "above": "below",
     "below": "above",
     "behind": "infront",
-    "on top of": "not on top of",
+    "on top of": "below of",
     "under": "over",
     "over": "under",
     "left of": "right of",
@@ -177,6 +154,7 @@ negate = {
     "beside": "not beside",
     "in the middle of": "not in the middle of",
     "congruent": "incongruent",
+    "not beneath": "beneath",
 }
 
 negate_horizontal_flip = {
@@ -203,7 +181,9 @@ negate_vertical_flip = {
     'below': 'above'
 }
 
-adaptive_relation_set = {
+
+# generated via GPT-3
+relation_aware_relation_set = {
     'at the right side of': 'at the left side of',
     'at the left side of': 'at the right side of',
     'left of': 'right of',
@@ -212,10 +192,19 @@ adaptive_relation_set = {
     'close to': 'close to',
     'far from': 'far from',
     'above': 'below',
-    'below': 'above'
+    'below': 'above',
+    'on top of': 'below',
+    'down from': 'up from',
+    'under': 'over',
+    'over': 'under',
+    'beneath': 'not beneath',
+    'facing away from': 'facing away from',
+    'parallel to': 'parallel to',
+    'perpendicular to': 'perpendicular to',
 }
 
-adaptive_augmentation = {
+
+relation_aware_augmentation = {
     'at the right side of': horizontal_flip,
     'at the left side of': horizontal_flip,
     'left of': horizontal_flip,
@@ -224,14 +213,22 @@ adaptive_augmentation = {
     'close to': scale_down,
     'far from': scale_up,
     'above': vertical_flip,
-    'below': vertical_flip
+    'below': vertical_flip,
+    'on top of': vertical_flip,
+    'down from': vertical_flip,
+    'under': vertical_flip,
+    'over': vertical_flip,
+    'beneath': vertical_flip,
+    'facing away from': horizontal_flip,
+    'parallel to': horizontal_flip,
+    'perpendicular to': horizontal_flip,
+
 }
 
 
-# load image in real time version
 class ImageTextClassificationDataset(Dataset):
     def __init__(self, img_path, json_path, vilt_processor=None, filter_relations=None, flips=[], negation=False,
-                 visual_prompt=False, visual_json_path=None, synonym_objects=False):
+                 visual_prompt=False, visual_json_path=None, synonym_objects=False, remaining_flip_handler=None):
         self.img_path = img_path
 
         self.imgs = {}
@@ -271,8 +268,8 @@ class ImageTextClassificationDataset(Dataset):
                 self.image_name_to_data[id_to_image_path[annot['image_id']]] = annot['segments_info']
             for cat in annot_data['categories']:
                 self.id_category_map[cat['id']] = cat['name']
-            # print(self.id_category_map)
         self.synonym_objects = synonym_objects
+        self.remaining_flip_handler = remaining_flip_handler
 
     def get_bbox(self, data_point):
         if 'subj' in data_point:
@@ -294,9 +291,6 @@ class ImageTextClassificationDataset(Dataset):
                 if self.id_category_map[seg['category_id']] == names[1]:
                     x, y, w, h = seg['bbox']
                     bbox[1] = [x, y, x + w, y + h]
-            # if None in bbox:
-            #     print(bbox, names)
-            #     import pdb;pdb.set_trace()
         return bbox
 
     def __getitem__(self, idx):
@@ -306,25 +300,27 @@ class ImageTextClassificationDataset(Dataset):
         try:
             vertical_relation = negate_vertical_flip[relation]
             horizontal_relation = negate_horizontal_flip[relation]
-            adaptive_relation = adaptive_relation_set[relation]
-            adaptive_flip = adaptive_augmentation[relation]
+            relation_aware_relation = relation_aware_relation_set[relation]
+            relation_aware_flip = relation_aware_augmentation[relation]
 
         except KeyError:
             vertical_relation = relation
             horizontal_relation = relation
-            adaptive_relation = relation
-            adaptive_flip = adjust_color
-
+            relation_aware_relation = relation
+            if self.remaining_flip_handler == 'zoom':
+                relation_aware_flip = zoom_image
+            elif self.remaining_flip_handler == 'adjust_color':
+                relation_aware_flip = adjust_color
+            else:
+                relation_aware_flip = no_change
         negative_relation = negate[relation]
-        negative_adaptive_relation = negate[adaptive_relation]
+        negative_relation_aware_relation = negate[relation_aware_relation]
 
         full_subject_a = data_point["caption"].split(' ' + relation + ' ')[0]
         full_subject_b = data_point["caption"].split(' ' + relation + ' ')[1]
         full_subject_a = full_subject_a.strip(".").lower()
         full_subject_b = full_subject_b.strip(".").lower()
-        # stopwords = ['the']
         stopwords = []
-        # remove stop words
         full_subject_a = [word for word in full_subject_a.split() if word.lower() not in stopwords]
         full_subject_b = [word for word in full_subject_b.split() if word.lower() not in stopwords]
 
@@ -336,11 +332,9 @@ class ImageTextClassificationDataset(Dataset):
             vertical_relation = modifier[0] + " " + vertical_relation
             horizontal_relation = modifier[0] + " " + horizontal_relation
             negative_relation = modifier[0] + " " + negative_relation
-            adaptive_relation = modifier[0] + " " + adaptive_relation
+            relation_aware_relation = modifier[0] + " " + relation_aware_relation
         else:
-            # print ('relation:', relation, ':', data_point["caption"])
             pass
-        # convert word array to string
         full_subject_a = " ".join(full_subject_a)
         full_subject_b = " ".join(full_subject_b)
 
@@ -349,27 +343,13 @@ class ImageTextClassificationDataset(Dataset):
             full_subject_b = self.get_synonym_objects(full_subject_b).join(', ')
 
         if self.visual_prompt:
-            # full_subject_a = full_subject_a + ' in red circle'
-            # full_subject_b = full_subject_b + ' in blue circle'
-
             full_subject_a = 'red circle around ' + full_subject_a
             full_subject_b = 'blue circle around ' + full_subject_b
-
-            # full_subject_a = 'red circle'
-            # full_subject_b = 'blue circle'
 
 
 
         # contains
         stopwords = ['the', 'is']
-
-        # if 'adaptive_flip' in self.flips:
-        #     captions = [
-        #         # false case first
-        #         full_subject_a + ' "' + negative_relation + '"' + full_subject_b,
-        #         full_subject_a + ' "' + relation + '" ' + full_subject_b,
-        #     ]
-        # else:
         captions = [
             # false case first
             full_subject_a + ' "' + negative_relation + '" ' + full_subject_b,
@@ -401,23 +381,14 @@ class ImageTextClassificationDataset(Dataset):
                 ]
             )
         #
-        if 'adaptive_flip' in self.flips:
-            # if adaptive_relation == relation:
+        if 'relation_aware_flip' in self.flips:
+            # if relation_aware_relation == relation:
             captions.extend(
                 [
                     # false case first
-                    full_subject_a + ' "' + negative_adaptive_relation + '" ' + full_subject_b,
-                    full_subject_a + ' "' + adaptive_relation + '" ' + full_subject_b,
-                ]
-            )
-            # else:
-            #     captions.extend(
-            #         [
-            #             # false case first
-            #             full_subject_a + ' "' + adaptive_relation + '" ' + full_subject_b,
-            #             full_subject_a + ' "' + negative_adaptive_relation + '" ' + full_subject_b,
-            #         ]
-            #     )
+                    full_subject_a + ' "' + negative_relation_aware_relation + '" ' + full_subject_b,
+                    full_subject_a + ' "' + relation_aware_relation + '" ' + full_subject_b,
+                ])
 
         # load Image
         img_path = os.path.join(self.img_path, data_point["image"])
@@ -444,8 +415,8 @@ class ImageTextClassificationDataset(Dataset):
         if 'horizontal_flip' in self.flips:
             images.append(horizontal_flip(image))
 
-        if 'adaptive_flip' in self.flips:
-            images.append(adaptive_flip(image))
+        if 'relation_aware_flip' in self.flips:
+            images.append(relation_aware_flip(image))
 
         if 'rotate' in self.flips:
             images.append(rotate(image, degree=-15))

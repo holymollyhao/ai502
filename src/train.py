@@ -18,7 +18,13 @@ import torch.nn.functional as F
 # from eval import evaluate
 # from lxmert_for_classification import LxmertForBinaryClassification
 
-flip = []
+def show_image(image, caption):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    plt.imshow(np.transpose(image.cpu().numpy(), (1, 2, 0)))
+    plt.title(caption)
+    plt.show()
+
 
 # Function to transform binary labels to unique labels for a given split
 def transform_labels_for_split(binary_labels, num_texts_per_image):
@@ -32,9 +38,12 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
     model.cuda()
     model.eval()
 
+    unique_subcategories = list(set(relation_to_subcategory.values()))
+
     correct_orig = 0
     correct, total, all_true = 0, 0, 0
-    correct_per_category = {}
+    correct_per_category = {key: 0 for key in unique_subcategories}
+    total_per_category = {key: 0 for key in unique_subcategories}
     preds = []
     errors = list()
     tot_val_loss = 0
@@ -49,15 +58,11 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             batch_cap = input_ids.cuda()
             batch_img = pixel_values.cuda()
-            # print('Batch shape')
-            # print(batch_cap.shape, batch_img.shape)
             outputs = model(input_ids=batch_cap, pixel_values=batch_img)
-        assert len(outputs.text_embeds) == len(batch_cap)
+        # assert len(outputs.text_embeds) == len(batch_cap)
         # reproduce huggingface webapp
         image_features = outputs.image_embeds
         text_features = outputs.text_embeds
-        # print('Image and Text shape')
-        # print(image_features.shape, text_features.shape)
 
         # If reshaping is necessary, ensure it aligns with your logic
         text_features = text_features.view(-1, 2, text_features.shape[-1])
@@ -79,18 +84,19 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
         valid_loss = F.cross_entropy(scores, y.squeeze().long())
         tot_val_loss += valid_loss.item()
         sum_list = [1 if preds[i] == y[i] else 0 for i in range(len(y))]
-
-        correct_full += int(torch.sum(torch.tensor(sum_list)))
-        total_full += len(sum_list)
+        sum_list = [i for idx, i in enumerate(sum_list) if idx % (len(flips) + 1) == 0]
+        sum_list = torch.tensor(sum_list)
 
         if filter_relations is not None:
-            for relation, correct in zip(relation_names, sum_list):
+            for k, (relation, correct) in enumerate(zip(relation_names, sum_list)):
                 subcategory = relation_to_subcategory[relation]
+                correct_per_category[subcategory] += correct
+                total_per_category[subcategory] += 1
 
-            sum_list = [i for idx, i in enumerate(sum_list) if idx in filter_idx_list and idx%(len(flips)+1) == 0]
-        else:
-            sum_list = [i for idx, i in enumerate(sum_list) if idx%(len(flips)+1) == 0]
-        sum_list = torch.tensor(sum_list)
+                if subcategory == 'topological':
+                    print(relation, correct)
+                    show_image(pixel_values[k], captions[k])
+
         # print(y)
         correct_this_batch = int(torch.sum(sum_list))
         # print(correct_this_batch)
@@ -99,11 +105,12 @@ def evaluate(data_loader, model, flips=[], filter_relations=None):
 
     ave_score = correct / float(total)
     val_loss = tot_val_loss / len(data_loader)
-    wandb.log({"val_loss": val_loss})
 
-    ave_score_full = correct_full / float(total_full)
-    wandb.log({"eval_full": ave_score_full})
+    ave_per_category = {key: correct_per_category[key] / (total_per_category[key] + 1e-9) for key in unique_subcategories}
+    print("Validation loss: ", val_loss)
+    print("Validation acc per category: ", ave_per_category)
 
+    ave_all = sum(correct_per_category.values()) / sum(total_per_category.values())
     return ave_score
 
 
@@ -115,9 +122,6 @@ def set_grad(model, requires_grad):
     for param in model.text_model.parameters():
         param.requires_grad = requires_grad
 
-    # for param in model.text_model.embeddings.position_embedding.parameters():
-    #     param.requires_grad = requires_grad
-
 
 def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epoch=-1, \
           val_best_score=0, processor=None, flips=[]):
@@ -127,10 +131,9 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
 
     model.cuda()
     model.train()
-    acc = evaluate(val_loader, model, flips=flip, filter_relations=negate_horizontal_flip.keys())
+    acc = evaluate(val_loader, model, flips=flips, filter_relations=negate_horizontal_flip.keys())
     print("Initial validation accuracy: ", acc)
-    if args.wandb:
-        wandb.log({"eval_acc": acc})
+
 
     for i, data in tqdm(enumerate(train_loader), total=len(train_loader)):
         optimizer.zero_grad()
@@ -214,13 +217,13 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
                 text_features = text_features.view(-1, 2, text_features.shape[-1])
                 total_loss = 0
                 y = y.squeeze().tolist()
-                for idx in range(len(flip) + 1):
-                    selected_images = image_features[idx::len(flip) + 1]
-                    selected_text = text_features[idx::len(flip) + 1].reshape(-1, text_features.shape[-1])
+                for idx in range(len(flips) + 1):
+                    selected_images = image_features[idx::len(flips) + 1]
+                    selected_text = text_features[idx::len(flips) + 1].reshape(-1, text_features.shape[-1])
 
                     selected_labels_text = []
                     for j in range(len(selected_images)):
-                        select_idx = idx + j * (len(flip) + 1)
+                        select_idx = idx + j * (len(flips) + 1)
                         selected_labels_text.append(y[select_idx] + (j * 2))
 
                     selected_labels_image = []
@@ -238,8 +241,6 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
                     total_loss += text_loss + image_loss
 
                 loss = total_loss
-        if args.wandb:
-            wandb.log({"loss": loss})
 
         if args.amp:
             scaler.scale(loss).backward()
@@ -253,23 +254,18 @@ def train(args, train_loader, val_loader, model, scaler=None, step_global=0, epo
 
         # log lr
         lr = optimizer.param_groups[0]['lr']
-        if args.wandb:
-            wandb.log({"lr": lr})
 
         train_loss += loss.item()
-        # wandb.log({"Loss": loss.item()})
         train_steps += 1
         step_global += 1
 
         # evaluate and save
         if step_global % args.eval_step == 0:
             # evaluate
-            acc = evaluate(val_loader, model, flips=flip, filter_relations=negate_horizontal_flip.keys())
+            acc = evaluate(val_loader, model, flips=flips, filter_relations=negate_horizontal_flip.keys())
             print(f"====== evaliuate ======")
             print(f"epoch: {epoch}, global step: {step_global}, val performance: {acc}")
             print(f"=======================")
-            if args.wandb:
-                wandb.log({"eval_acc": acc})
             if val_best_score < acc:
                 val_best_score = acc
             else:
@@ -301,7 +297,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_type', type=str, default="clip", help="visualbert or lxmert or vilt")
     parser.add_argument('--model_path', type=str, default="openai/clip-vit-large-patch14-336")
     parser.add_argument('--lr', type=float, default=2e-5)
-    parser.add_argument('--epoch', type=int, default=100)
+    parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--eval_step', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--amp', action="store_true", \
@@ -312,16 +308,12 @@ if __name__ == "__main__":
     parser.add_argument('--wandb', action="store_true", help="use wandb")
     parser.add_argument('--data_parallel', action="store_true", help="use data parallel")
     parser.add_argument('--cumulative_grad_steps', type=int, default=1)
-
+    parser.add_argument('--flip_handler', type=str, default='none')
+    parser.add_argument('--flips', nargs='+', default=[], help='A list of texts')
 
     args = parser.parse_args()
 
     torch.manual_seed(args.random_seed)
-
-    if args.wandb:
-        wandb.login(key='3e8caba01887ae3614b36f6d3f8755887e29e5d4')
-        wandb.init(name=f'{args.model_path}_{args.output_dir}', dir='./wandb_logs',
-                   project='Spatial Reasoning', entity='maxkim139')
 
     model_type = args.model_type
     # load model
@@ -427,20 +419,31 @@ if __name__ == "__main__":
         input_ids = torch.cat(input_id_list, dim=0).view(-1, 2, input_ids.shape[-1])
         pixel_values = torch.cat(pixel_value_list, dim=0)
         labels = torch.cat(labels_list, dim=0)
-        # inputs = processor(captions[0], images=imgs[0], return_tensors="pt", padding=True)
-        # input_ids = inputs.input_ids
-        # pixel_values = inputs.pixel_values
-        # print(input_ids.shape, pixel_values.shape)
-
-        # labels = torch.tensor(labels)
         return input_ids, pixel_values, labels, caption_list, filenames, relations
 
 
     img_feature_path = args.img_feature_path
     # relations = list(negate_horizontal_flip.keys())
     relations = None
-    dataset_train = ImageTextClassificationDataset(img_feature_path, args.train_json_path, filter_relations=relations, flips=flip)
-    dataset_val = ImageTextClassificationDataset(img_feature_path, args.val_json_path, filter_relations=relations, flips=flip)
+    visual_json_path = os.path.join('../data', 'annotations', 'panoptic_train2017.json')
+    dataset_train = ImageTextClassificationDataset(
+        img_feature_path,
+        args.train_json_path,
+        filter_relations=relations,
+        flips=args.flips,
+        remaining_flip_handler=args.flip_handler,
+        visual_prompt=False,
+        visual_json_path=visual_json_path
+    )
+    dataset_val = ImageTextClassificationDataset(
+        img_feature_path,
+        args.val_json_path,
+        filter_relations=relations,
+        flips=args.flips,
+        remaining_flip_handler=args.flip_handler,
+        visual_prompt=False,
+        visual_json_path=visual_json_path
+    )
 
     if model_type == "visualbert":
         collate_fn_batch = collate_fn_batch_visualbert
@@ -480,5 +483,5 @@ if __name__ == "__main__":
     for epoch in range(args.epoch):
         loss, global_step, val_best_score = train(args, train_loader, val_loader, model, scaler=scaler, \
                                                   step_global=global_step, epoch=epoch, val_best_score=val_best_score,
-                                                  processor=processor, flips=flip)
+                                                  processor=processor, flips=args.flips)
         print(f"epoch: {epoch}, global step: {global_step}, loss: {loss}")
