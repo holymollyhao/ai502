@@ -15,7 +15,7 @@ Recommnend, generating anaconda env with python==3.8
 Tested with torch==2.0.1 and 2.3.0 / transformers=4.41.x
 
 ## Data
-See [`data/`](https://github.com/holymollyhao/ai502/tree/main/data) folder's readme.
+See [`data/`](https://github.com/holymollyhao/ai502/tree/master/data) folder's readme.
 
 ### Run VP and RA-aug at once
 ```bash
