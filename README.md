@@ -1,8 +1,8 @@
 # CLIP VSR
 This is the code repository for 2024 Spring KAIST AI502 Deep Learning final project by Nayoung Oh, Taewon Kim, Anh Nguyen Thi Chung.
 
-## Instalation
-Recommnend, generating anaconda env with python==3.8
+## Installation
+Recommend, generating anaconda env with python==3.8
 - Pillow
 - matplotlib
 - opencv_python
